@@ -1,1 +1,1 @@
-https://api.cpolar.com/beta
+http://77d17c55.r40.cpolar.top/beta
