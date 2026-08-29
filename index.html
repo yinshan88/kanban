@@ -38,14 +38,35 @@
       var cacheBust = function(){ return '?v=' + Date.now(); };
 
       // 预检目标地址是否可达（带超时；普通 fetch 跨域时 status/ok 仍可读）
-      function probe(url, timeout){
+      // 注意：跳转站是 HTTPS 页面，fetch http:// 地址会被 mixed content 拦截，自动升级试 https://
+      // fetch 被 CORS 拦截时会 reject，用 <img> 探测兜底（img 不受 CORS 限制，onload=可达）
+      function probeImg(u, timeout){
+        return new Promise(function(resolve){
+          var img = new Image();
+          var done = false;
+          var t = setTimeout(function(){ done = true; img.src = ''; resolve(false); }, timeout || 6000);
+          img.onload = function(){ if(!done){ done = true; clearTimeout(t); resolve(true); } };
+          img.onerror = function(){ if(!done){ done = true; clearTimeout(t); resolve(false); } };
+          img.src = u;
+        });
+      }
+      function probeOnce(u, timeout){
         return new Promise(function(resolve){
           var ctrl = new AbortController();
           var t = setTimeout(function(){ ctrl.abort(); }, timeout || 6000);
-          fetch(url, { signal: ctrl.signal, cache: 'no-store' })
+          fetch(u, { signal: ctrl.signal, cache: 'no-store' })
             .then(function(r){ clearTimeout(t); resolve(r.ok); })
-            .catch(function(){ clearTimeout(t); resolve(false); });
+            .catch(function(){ clearTimeout(t); probeImg(u, timeout).then(resolve); });
         });
+      }
+      function probe(url, timeout){
+        if(url.indexOf('http://') === 0){
+          return probeOnce(url, timeout).then(function(ok){
+            if(ok) return true;
+            return probeOnce('https://' + url.slice('http://'.length), timeout);
+          });
+        }
+        return probeOnce(url, timeout);
       }
 
       // 读取 latest.txt（GitHub Pages，带时间戳防缓存）
