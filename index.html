@@ -6,256 +6,138 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
     <link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-    <!-- 粒子凝字技术取自 GitHub 开源项目 develper21/sphere_particle (MIT License)
-         https://github.com/develper21/sphere_particle
-         核心 borrowed：THREE.Points + 球面分布 + 离屏 canvas 文字像素采样 + 补间变形。
-         本页用法：随机星尘 → 凝结成 aaaaaaa.vip 字样 → 停留 → 跳转看板。黑白配色。
-         手机端适配：粒子数减半(4500)、DPR 封顶 2、相机拉远、单行字按屏宽整体缩放、
-         hold 期禁止旋转（长字一转就像被裁）、touchstart 秒跳。
-         2026-09-19 手机端优化：
-           ① 粒子数按屏幕自适应（手机 4500 / 桌面 9000），devicePixelRatio 封顶 2 防高分屏过载
-           ② 关 antialias（手机 GPU 省一截，粒子本来就圆看不出锯齿）
-           ③ 手机相机拉远（z=34）适配竖屏，横竖屏切换（resize/orientationchange）都重算目标
-           ④ 效果曲线重做：凝结改为「先缓后快再缓」的 backOut 轻微过冲（粒子有冲进去的
-              劲头，不再是匀速滑入）；每粒子错峰 0~25% 延迟，先后来齐，凝结有层次
-           ⑤ 漂浮相位加入微视差漂移（gather 期粒子缓慢流动，不是死版freeze）
-           ⑥ 9000 粒子全帧 lerp 在低端机掉帧 → 凝结期每帧只更新一次、用局部变量缓存数组，
-              且 hold 期停止逐帧写 position（自转靠 rotation，零 CPU 开销） -->
+    <!-- 展示形式：解码/乱码翻转显现（Text Scramble，经典开源效果模式，
+         源自 Justin Windle / soulwire 的 CodePen "Text Scramble Effect"，
+         各前端社区广泛流传的开源实现思路），配合纯 canvas 星尘漂浮背景。
+         文字为 DOM 渲染 + vw 自适应字号，任何屏幕完整可见，无 3D、零重库、秒开。
+         节奏：乱码翻滚约 1.2s 逐字定格 aaaaaaa.vip → 停留 0.9s → 跳转，点击立即跳。 -->
     <style>
         html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;
             -webkit-tap-highlight-color:transparent}
-        #container{width:100%;height:100%;position:fixed;inset:0}
-        #go{position:fixed;left:0;right:0;bottom:calc(8% + env(safe-area-inset-bottom));text-align:center;z-index:2;
-            color:rgba(255,255,255,.5);font:13px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+        #stars{position:fixed;inset:0;z-index:1}
+        #wrap{position:fixed;inset:0;z-index:2;display:flex;flex-direction:column;
+            align-items:center;justify-content:center;pointer-events:none}
+        #addr{
+            font-family:'Courier New',ui-monospace,monospace;
+            font-weight:700;
+            /* 手机单独适配：字号随屏宽缩放（vw），窄屏也不会被裁；
+               min() 封顶防止桌面过大 */
+            font-size:min(8.5vw,72px);
+            color:#fff;
+            letter-spacing:.06em;
+            text-shadow:0 0 18px rgba(255,255,255,.55),0 0 60px rgba(255,255,255,.2);
+            white-space:nowrap;
+        }
+        #addr .dim{color:rgba(255,255,255,.45)}   /* 未定格字符：暗灰 */
+        #addr .lit{color:#fff}                    /* 已定格字符：亮白 */
+        #bar{width:min(46vw,260px);height:2px;background:rgba(255,255,255,.12);
+            margin-top:26px;border-radius:2px;overflow:hidden}
+        #bar i{display:block;height:100%;width:0;background:#fff;
+            box-shadow:0 0 10px rgba(255,255,255,.8);
+            transition:width .18s linear}
+        #go{position:fixed;left:0;right:0;bottom:calc(8% + env(safe-area-inset-bottom));
+            text-align:center;z-index:3;color:rgba(255,255,255,.45);
+            font:13px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
             letter-spacing:4px;pointer-events:none;animation:p 1.8s ease-in-out infinite}
         @keyframes p{0%,100%{opacity:.3}50%{opacity:.85}}
     </style>
 </head>
 <body>
-<div id="container"></div>
+<canvas id="stars"></canvas>
+<div id="wrap">
+    <div id="addr"></div>
+    <div id="bar"><i id="fill"></i></div>
+</div>
 <div id="go">正在进入看板 · 点击立即跳转</div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
-// ===== 核心技术（球面粒子 + 文字像素采样变形）取自 develper21/sphere_particle (MIT) =====
+// ============ 星尘背景：漂浮微粒 + 缓慢流动（纯 Canvas 2D，无库） ============
+(function(){
+    var cv=document.getElementById('stars'),ctx=cv.getContext('2d');
+    var DPR=Math.min(devicePixelRatio||1,2);
+    var W,H,dots=[],N;
+    function size(){
+        W=cv.width=innerWidth*DPR;H=cv.height=innerHeight*DPR;
+        cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';
+        N=Math.round(innerWidth*innerHeight/14000);   // 手机≈40~60 颗，桌面≈120
+        dots=[];
+        for(var i=0;i<N;i++)dots.push({
+            x:Math.random()*W,y:Math.random()*H,
+            vx:(Math.random()-.5)*.12*DPR,vy:(Math.random()-.5)*.12*DPR,
+            r:(Math.random()*1.2+.4)*DPR,tw:Math.random()*Math.PI*2
+        });
+    }
+    size();addEventListener('resize',size);
+    (function loop(t){
+        requestAnimationFrame(loop);
+        ctx.clearRect(0,0,W,H);
+        for(var i=0;i<dots.length;i++){
+            var d=dots[i];
+            d.x+=d.vx;d.y+=d.vy;
+            if(d.x<0)d.x=W;if(d.x>W)d.x=0;
+            if(d.y<0)d.y=H;if(d.y>H)d.y=0;
+            var a=.25+.35*Math.abs(Math.sin(t*.001+d.tw));   // 闪烁
+            ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,7);
+            ctx.fillStyle='rgba(255,255,255,'+a+')';ctx.fill();
+        }
+    })(0);
+})();
+
+// ============ 解码显现（Text Scramble 经典模式：乱码逐字定格） ============
 const TEXT = 'aaaaaaa.vip';
 const GO = 'https://kb.aaaaaaa.vip';
+const CHARS = '!<>-_\\/[]{}—=+*^?#01';
 
-// 手机端自适应粒子数：按屏幕面积估算，手机≈4500、桌面≈9000（原项目固定 12000）
-const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-                  || Math.min(innerWidth, innerHeight) < 600;
-const count = IS_MOBILE ? 4500 : 9000;
-
-let scene, camera, renderer, particles;
-let phase = 'gather';          // gather(星尘) → text(凝结) → hold(保持) → go
-let phaseStart = performance.now();
-const startPos = new Float32Array(count * 3);
-const textPos = new Float32Array(count * 3);
-const delays = new Float32Array(count);   // 每粒子错峰延迟 0~0.25（曲线分层用）
-const DPR = Math.min(devicePixelRatio || 1, 2);
-
-function init() {
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(DPR);
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.setClearColor(0x000000);
-    document.getElementById('container').appendChild(renderer.domElement);
-    camera.position.z = IS_MOBILE ? 34 : 25;   // 手机竖屏拉远，字才放得下
-    createParticles();
-    animate();
+// 逐字独立状态机：每个字符经历随机次数的乱码翻转后定格（经典 TextScramble 逻辑）
+function Scramble(el){
+    this.el=el;
+    this.frame=0;
+    this.queue=[];
 }
-
-// 球面均匀分布（原项目 sphericalDistribution 原样保留）
-function sphericalDistribution(i) {
-    const phi = Math.acos(-1 + (2 * i) / count);
-    const theta = Math.sqrt(count * Math.PI) * phi;
-    return {
-        x: 8 * Math.cos(theta) * Math.sin(phi),
-        y: 8 * Math.sin(theta) * Math.sin(phi),
-        z: 8 * Math.cos(phi)
-    };
-}
-
-function createParticles() {
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-
-    for (let i = 0; i < count; i++) {
-        const x = (Math.random() - 0.5) * 60;
-        const y = (Math.random() - 0.5) * 40;
-        const z = (Math.random() - 0.5) * 30;
-        positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
-        startPos[i * 3] = x; startPos[i * 3 + 1] = y; startPos[i * 3 + 2] = z;
-        delays[i] = Math.random() * 0.25;        // 错峰：每粒子晚 0~25% 才动身
-
-        const v = 0.55 + Math.random() * 0.45;
-        colors[i * 3] = v; colors[i * 3 + 1] = v; colors[i * 3 + 2] = v;
+Scramble.prototype.setText=function(newText){
+    const old=this.el.innerText||'';
+    const len=Math.max(old.length,newText.length);
+    this.queue=[];
+    for(let i=0;i<len;i++){
+        const from=old[i]||'',to=newText[i]||'';
+        const start=Math.floor(Math.random()*18);        // 第几帧开始变
+        const end=start+Math.floor(Math.random()*18);    // 第几帧定格
+        this.queue.push({from,to,start,end,char:''});
     }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    const material = new THREE.PointsMaterial({
-        size: 0.08,
-        vertexColors: true,
-        blending: THREE.AdditiveBlending,
-        transparent: true,
-        opacity: 0.8,
-        sizeAttenuation: true
-    });
-
-    particles = new THREE.Points(geometry, material);
-    scene.add(particles);
-}
-
-// 文字像素采样（原项目 createTextPoints 核心）
-function createTextPoints(text) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const fontSize = 100;
-    const padding = 20;
-
-    ctx.font = `bold ${fontSize}px Arial`;
-    const textWidth = ctx.measureText(text).width;
-
-    canvas.width = textWidth + padding * 2;
-    canvas.height = fontSize + padding * 2;
-
-    ctx.fillStyle = 'white';
-    ctx.font = `bold ${fontSize}px Arial`;
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const pixels = imageData.data;
-    const points = [];
-    const threshold = 128;
-
-    for (let i = 0; i < pixels.length; i += 4) {
-        if (pixels[i] > threshold) {
-            const x = (i / 4) % canvas.width;
-            const y = Math.floor((i / 4) / canvas.width);
-            if (Math.random() < 0.3) {
-                points.push({
-                    x: (x - canvas.width / 2) / (fontSize / 10),
-                    y: -(y - canvas.height / 2) / (fontSize / 10)
-                });
-            }
-        }
+    cancelAnimationFrame(this.frameReq);
+    this.frame=0;
+    this.update();
+};
+Scramble.prototype.update=function(){
+    let out='',done=0;
+    for(const q of this.queue){
+        if(this.frame>=q.end){done++;out+='<span class="lit">'+q.to+'</span>';}
+        else if(this.frame>=q.start){
+            if(!q.char||Math.random()<.28)
+                q.char=CHARS[Math.floor(Math.random()*CHARS.length)];
+            out+='<span class="dim">'+q.char+'</span>';
+        }else out+='<span class="dim">'+(q.from||'&nbsp;')+'</span>';
     }
-    return points;
-}
-
-// 目标点阵：前 N 个粒子贴文字，其余散外围（原项目 morphToText 分配策略）
-// 【网址永远单行】手机端靠「整体缩放」保证 11 字符完整可见：字宽超出可视范围时
-// 等比缩小撑满屏宽 88%；桌面端同样逻辑（桌面屏宽够时 scale=1 不缩）。
-// ⚠️ hold 期绝不能自转——长条字绕 Y 轴一转，后面的字母转到侧面，看起来就像被裁。
-function buildTextTargets() {
-    const halfW = camera.position.z * Math.tan(THREE.MathUtils.degToRad(37.5)) * camera.aspect;
-    const textPoints = createTextPoints(TEXT);
-    if (!textPoints.length) return;
-
-    const textHalfW = Math.max(...textPoints.map(function(p){ return Math.abs(p.x); }));
-    const scale = Math.min(1, (halfW * 0.88) / textHalfW);   // 单行整体缩放，字永远完整
-
-    for (let i = 0; i < count; i++) {
-        if (i < textPoints.length) {
-            textPos[i * 3]     = textPoints[i].x * scale;
-            textPos[i * 3 + 1] = textPoints[i].y * scale;
-            textPos[i * 3 + 2] = 0;
-        } else {
-            const angle = Math.random() * Math.PI * 2;
-            const radius = Math.random() * 20 + 10;
-            textPos[i * 3]     = Math.cos(angle) * radius;
-            textPos[i * 3 + 1] = Math.sin(angle) * radius;
-            textPos[i * 3 + 2] = (Math.random() - 0.5) * 10;
-        }
+    this.el.innerHTML=out;
+    if(done<this.queue.length){
+        this.frameReq=requestAnimationFrame(()=>this.update());
+        this.frame++;
     }
-}
+};
 
-// ===== 效果曲线（重做）=====
-// ① 主缓动：easeOutBack —— 先快后慢、终点轻微过冲再回弹，粒子"冲进"字里
-function easeOutBack(t) {
-    const c1 = 1.70158, c3 = c1 + 1;
-    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-}
-// ② 前段加速铺垫：easeInQuad，让起步有蓄力感
-function easeInQuad(t) { return t * t; }
-// ③ 每粒子合成曲线：铺垫(quad) + 主段(back 过冲)，按各自 delay 错峰
-function particleK(elapsed, dur, delay) {
-    const t = (elapsed / dur - delay) / (1 - delay);   // 扣除错峰后自己的进度
-    if (t <= 0) return 0;
-    if (t >= 1) return 1;
-    if (t < 0.35) return easeInQuad(t / 0.35) * 0.18;              // 前 35% 时间只走 18% 路程（蓄力）
-    const t2 = (t - 0.35) / 0.65;
-    return 0.18 + easeOutBack(t2) * 0.82;                          // 后 65% 冲刺 + 过冲回弹
-}
-
-let driftSeed = new Float32Array(count);   // gather 期微视差漂移的随机相位
-for (let i = 0; i < count; i++) driftSeed[i] = Math.random() * Math.PI * 2;
-
-function animate() {
-    requestAnimationFrame(animate);
-    const now = performance.now();
-    const elapsed = now - phaseStart;
-
-    const pos = particles.geometry.attributes.position.array;
-
-    if (phase === 'gather') {
-        // 0.4s 星尘微视差漂移（每粒子按相位轻微绕动，不是死版freeze）
-        const t = now * 0.001;
-        for (let i = 0; i < count; i++) {
-            const s = driftSeed[i];
-            pos[i * 3]     = startPos[i * 3]     + Math.sin(t * 0.8 + s) * 0.6;
-            pos[i * 3 + 1] = startPos[i * 3 + 1] + Math.cos(t * 0.6 + s) * 0.6;
-        }
-        particles.geometry.attributes.position.needsUpdate = true;
-        if (elapsed > 400) { phase = 'text'; phaseStart = now; buildTextTargets(); }
-    } else if (phase === 'text') {
-        // 1.5s 凝结：错峰 + 蓄力冲刺 + 过冲回弹
-        const DUR = 1500;
-        let maxK = 0;
-        for (let i = 0; i < count; i++) {
-            const k = particleK(elapsed, DUR, delays[i]);
-            if (k > maxK) maxK = k;
-            pos[i * 3]     = startPos[i * 3]     + (textPos[i * 3]     - startPos[i * 3])     * k;
-            pos[i * 3 + 1] = startPos[i * 3 + 1] + (textPos[i * 3 + 1] - startPos[i * 3 + 1]) * k;
-            pos[i * 3 + 2] = startPos[i * 3 + 2] + (textPos[i * 3 + 2] - startPos[i * 3 + 2]) * k;
-        }
-        particles.geometry.attributes.position.needsUpdate = true;
-        if (elapsed >= DUR) { phase = 'hold'; phaseStart = now; }
-    } else if (phase === 'hold') {
-        // 字保持：不旋转（旋转会把字转出屏外，手机上像被裁），改呼吸缩放 + 辉光脉动
-        const e = elapsed;
-        const breath = 1 + Math.sin(e * 0.004) * 0.02;
-        particles.scale.set(breath, breath, breath);
-        particles.material.opacity = 0.75 + Math.sin(e * 0.005) * 0.15;
-        if (elapsed > 1500) { phase = 'go'; location.replace(GO); }
-    }
-
-    renderer.render(scene, camera);
-}
-
-function onResize() {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-    // 横竖屏切换后重算文字缩放，字始终完整可见
-    if (phase === 'text' || phase === 'hold') buildTextTargets();
-}
-addEventListener('resize', onResize);
-addEventListener('orientationchange', () => setTimeout(onResize, 200));
-
-// 触屏立即跳（touchstart 比 click 快 300ms 无延迟）
-document.addEventListener('touchstart', function(){ location.replace(GO); }, { passive: true });
-document.addEventListener('click', function(){ location.replace(GO); });
-
-init();
+// ============ 进度条 + 节奏编排 ============
+const addr=document.getElementById('addr'),fill=document.getElementById('fill');
+const sc=new Scramble(addr);
+setTimeout(()=>sc.setText(TEXT),250);                    // 0.25s 后开始解码
+const t0=Date.now();
+(function tick(){                                        // 进度条：2.4s 走满
+    const k=Math.min((Date.now()-t0)/2400,1);
+    fill.style.width=(k*100)+'%';
+    if(k<1)requestAnimationFrame(tick);
+})();
+setTimeout(()=>location.replace(GO),2600);               // 解码完停 1s 内跳
+document.addEventListener('touchstart',()=>location.replace(GO),{passive:true});
+document.addEventListener('click',()=>location.replace(GO));
 </script>
 <noscript><meta http-equiv="refresh" content="0;url=https://kb.aaaaaaa.vip"></noscript>
 </body>
