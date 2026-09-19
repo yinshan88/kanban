@@ -1,63 +1,218 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>正在进入看板…</title>
-<link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
-<link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
-<style>
-  html,body{margin:0;height:100%;background:#000;overflow:hidden;
-    font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
-  canvas{display:block}
-  #txt{position:fixed;left:0;right:0;bottom:9%;text-align:center;color:rgba(255,255,255,.55);
-    font-size:13px;letter-spacing:4px;pointer-events:none;animation:p 1.6s ease-in-out infinite}
-  @keyframes p{0%,100%{opacity:.35}50%{opacity:.85}}
-</style>
+    <meta charset="UTF-8">
+    <title>正在进入看板…</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
+    <link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
+    <!-- 动效核心取自 GitHub 开源项目 CLOUDWERX-DEV/Quantum-Particle-Animation (MIT License)
+         https://github.com/CLOUDWERX-DEV/Quantum-Particle-Animation
+         启用其 Vortex（漩涡）+ Trails（拖尾）+ Connections（粒子连线）效果，
+         配色改为黑白单色（原版为蓝紫彩色系），跳转定时 1.6s，点击立即跳。 -->
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        #go {
+            position: fixed;
+            left: 0; right: 0; bottom: 9%;
+            text-align: center;
+            color: rgba(255,255,255,.55);
+            font-size: 13px;
+            letter-spacing: 4px;
+            z-index: 2;
+            pointer-events: none;
+            animation: p 1.6s ease-in-out infinite;
+        }
+        @keyframes p { 0%,100%{opacity:.35} 50%{opacity:.9} }
+    </style>
 </head>
 <body>
-<canvas id="cv"></canvas>
-<div id="txt">正在进入看板</div>
-<script>
-(function(){
-  // 黑白粒子网络：粒子漂浮，近距离连白线，靠近中心被轻微吸引。
-  // 纯 canvas 无依赖；显示约 1.1s 后跳转看板，点击页面可立即跳。
-  var GO='https://kb.aaaaaaa.vip';
-  var cv=document.getElementById('cv'),ctx=cv.getContext('2d');
-  var W,H,dots=[],N;
-  function size(){W=cv.width=innerWidth;H=cv.height=innerHeight;
-    N=Math.min(90,Math.round(W*H/16000));}
-  size();addEventListener('resize',size);
-  function mk(){return{x:Math.random()*W,y:Math.random()*H,
-    vx:(Math.random()-.5)*.6,vy:(Math.random()-.5)*.6,r:Math.random()*1.6+.6};}
-  for(var i=0;i<N;i++)dots.push(mk());
-  var t0=performance.now();
-  function frame(now){
-    ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-    var cx=W/2,cy=H/2,k=(now-t0)/1100;          // 0→1 渐入
-    for(var i=0;i<dots.length;i++){
-      var d=dots[i];
-      d.x+=d.vx;d.y+=d.vy;
-      d.x+=(cx-d.x)*.0006;d.y+=(cy-d.y)*.0006;   // 轻微向心
-      if(d.x<0||d.x>W)d.vx*=-1;
-      if(d.y<0||d.y>H)d.vy*=-1;
-      ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,7);
-      ctx.fillStyle='rgba(255,255,255,'+(.5*k)+')';ctx.fill();
-      for(var j=i+1;j<dots.length;j++){
-        var o=dots[j],dx=d.x-o.x,dy=d.y-o.y,d2=dx*dx+dy*dy;
-        if(d2<130*130){
-          ctx.beginPath();ctx.moveTo(d.x,d.y);ctx.lineTo(o.x,o.y);
-          ctx.strokeStyle='rgba(255,255,255,'+((1-d2/16900)*.28*k)+')';
-          ctx.lineWidth=1;ctx.stroke();
+    <canvas id="quantumCanvas"></canvas>
+    <div id="go">正在进入看板 · 点击立即跳转</div>
+
+    <script>
+    // ===== 以下核心逻辑改自 CLOUDWERX-DEV/Quantum-Particle-Animation (MIT) =====
+    // 保留其 QuantumParticle 类、Vortex 物理、Trails 拖尾、Connections 连线；
+    // 删去控制面板/FPS/其他特效；配色改黑白。
+    class QuantumParticle {
+        constructor(x, y, speed) {
+            this.x = x;
+            this.y = y;
+            this.baseRadius = Math.random() * 3 + 1;
+            this.radius = this.baseRadius;
+            this.dx = (Math.random() - 0.5) * 2 * speed;
+            this.dy = (Math.random() - 0.5) * 2 * speed;
+            this.originalSpeed = speed;
+            this.trail = [];
         }
-      }
+
+        update(width, height, delta = 16) {
+            const normalizedDelta = delta / 16;
+            this.x += this.dx * normalizedDelta;
+            this.y += this.dy * normalizedDelta;
+            if (this.x < 0 || this.x > width) {
+                this.dx *= -1;
+                this.x = Math.max(0, Math.min(width, this.x));
+            }
+            if (this.y < 0 || this.y > height) {
+                this.dy *= -1;
+                this.y = Math.max(0, Math.min(height, this.y));
+            }
+            const speed = Math.hypot(this.dx, this.dy);
+            if (speed > this.originalSpeed * 2) {
+                this.dx = (this.dx / speed) * this.originalSpeed * 2;
+                this.dy = (this.dy / speed) * this.originalSpeed * 2;
+            }
+        }
+
+        draw(ctx, glowIntensity) {
+            ctx.beginPath();
+            ctx.fillStyle = this.color;
+            ctx.shadowBlur = glowIntensity;
+            ctx.shadowColor = this.color;
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
     }
-    if(now-t0<1100)requestAnimationFrame(frame);
-    else location.replace(GO);
-  }
-  requestAnimationFrame(frame);
-  document.addEventListener('click',function(){location.replace(GO);});
-})();
-</script>
+
+    class QuantumParticleAnimation {
+        constructor() {
+            this.canvas = document.getElementById('quantumCanvas');
+            this.ctx = this.canvas.getContext('2d');
+            this.particles = [];
+            this.connectionRadius = 150;
+            this.particleCount = 150;
+            this.particleSpeed = 1;
+            this.glowIntensity = 20;
+            this.vortexActive = true;     // ← 漩涡：开场即启用（原版为开关按钮）
+            this.trailsActive = true;     // ← 拖尾：开场即启用
+            this.mousePos = { x: 0, y: 0 };
+            this.lastTime = performance.now();
+
+            this.resize();
+            this.initParticles();
+            this.setupEventListeners();
+            this.animate();
+        }
+
+        setupEventListeners() {
+            window.addEventListener('resize', () => this.resize());
+            this.canvas.addEventListener('mousemove', (e) => {
+                this.mousePos.x = e.clientX;
+                this.mousePos.y = e.clientY;
+            });
+        }
+
+        resize() {
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+            this.width = this.canvas.width;
+            this.height = this.canvas.height;
+        }
+
+        initParticles() {
+            this.particles = [];
+            for (let i = 0; i < this.particleCount; i++) {
+                this.particles.push(new QuantumParticle(
+                    Math.random() * this.width,
+                    Math.random() * this.height,
+                    this.particleSpeed
+                ));
+            }
+        }
+
+        drawConnections() {
+            this.ctx.beginPath();
+            for (let i = 0; i < this.particles.length; i++) {
+                for (let j = i + 1; j < this.particles.length; j++) {
+                    const p1 = this.particles[i];
+                    const p2 = this.particles[j];
+                    const distance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                    if (distance < this.connectionRadius) {
+                        const opacity = 1 - (distance / this.connectionRadius);
+                        // 原版 rgba(100,200,255,...) 蓝色连线 → 改为白色
+                        this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.3})`;
+                        this.ctx.moveTo(p1.x, p1.y);
+                        this.ctx.lineTo(p2.x, p2.y);
+                    }
+                }
+            }
+            this.ctx.stroke();
+        }
+
+        animate() {
+            const delta = performance.now() - this.lastTime;
+            this.lastTime = performance.now();
+
+            // 原版拖尾画法：半透明黑覆盖制造残影
+            this.ctx.fillStyle = this.trailsActive ? 'rgba(0, 0, 0, 0.1)' : 'rgba(0, 0, 0, 0.2)';
+            this.ctx.fillRect(0, 0, this.width, this.height);
+
+            this.drawConnections();
+
+            const centerX = this.width / 2;
+            const centerY = this.height / 2;
+
+            for (let particle of this.particles) {
+                // 拖尾（原版逻辑）
+                if (this.trailsActive) {
+                    this.ctx.beginPath();
+                    this.ctx.strokeStyle = particle.color.replace('0.8', '0.2');
+                    this.ctx.lineWidth = particle.radius * 0.5;
+                    if (!particle.trail) particle.trail = [];
+                    particle.trail.push({ x: particle.x, y: particle.y });
+                    if (particle.trail.length > 10) particle.trail.shift();
+                    if (particle.trail.length > 1) {
+                        this.ctx.moveTo(particle.trail[0].x, particle.trail[0].y);
+                        for (let i = 1; i < particle.trail.length; i++) {
+                            this.ctx.lineTo(particle.trail[i].x, particle.trail[i].y);
+                        }
+                        this.ctx.stroke();
+                    }
+                }
+
+                // 漩涡物理（原版 Vortex Effect 公式，逐字保留）
+                if (this.vortexActive) {
+                    const dx = particle.x - centerX;
+                    const dy = particle.y - centerY;
+                    const angle = Math.atan2(dy, dx);
+                    const vortexForce = 0.1;
+                    particle.dx += -Math.sin(angle) * vortexForce;
+                    particle.dy += Math.cos(angle) * vortexForce;
+                }
+
+                particle.update(this.width, this.height, delta);
+                particle.draw(this.ctx, this.glowIntensity);
+            }
+
+            requestAnimationFrame(() => this.animate());
+        }
+    }
+
+    // 初始化：黑白配色（原版 default 色板是随机彩色，这里固定白色）
+    window.addEventListener('load', () => {
+        window.animation = new QuantumParticleAnimation();
+        for (let p of window.animation.particles) {
+            p.color = 'rgba(255, 255, 255, 0.8)';
+        }
+        setTimeout(function(){ location.replace('https://kb.aaaaaaa.vip'); }, 1600);
+        document.addEventListener('click', function(){ location.replace('https://kb.aaaaaaa.vip'); });
+    });
+    </script>
+    <noscript><meta http-equiv="refresh" content="0;url=https://kb.aaaaaaa.vip"></noscript>
 </body>
 </html>
