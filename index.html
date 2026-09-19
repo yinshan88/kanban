@@ -6,10 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
     <link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
-    <!-- 展示形式：浅色渐变背景（米白→淡灰蓝）+ 深灰文字 + 双色粒子炸开动效。
+    <!-- 展示形式：浅色渐变背景 + 双色粒子炸开动效 + 文字解码乱码翻转显现（Text Scramble）。
          文字 DOM 渲染 + vw 自适应字号，任何屏幕完整可见。零依赖纯 Canvas 2D。
-         2026-09-19 23:17 用户拍板：浅色背景，粒子不限黑白。
-         节奏：0ms 预热落地连接 → 400ms 起跳，点击立即跳。 -->
+         2026-09-19 23:20 用户拍板：文字要有动效 → 恢复解码乱码翻转（浅灰乱码→深灰定格）。
+         节奏：0ms 预热落地连接 → 0.06s 开解码 → 400ms 起跳，点击立即跳。 -->
     <style>
         html,body{margin:0;padding:0;height:100%;overflow:hidden;
             -webkit-tap-highlight-color:transparent;
@@ -25,6 +25,8 @@
             letter-spacing:.04em;
             white-space:nowrap;
         }
+        #addr .dim{color:rgba(31,41,55,.28)}      /* 未定格字符：浅灰乱码 */
+        #addr .lit{color:#1f2937}                 /* 已定格字符：深灰定格 */
         #go{position:fixed;left:0;right:0;bottom:calc(8% + env(safe-area-inset-bottom));
             text-align:center;z-index:3;color:rgba(31,41,55,.45);
             font:13px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
@@ -86,12 +88,46 @@
     })(0);
 })();
 
+// ============ 文字动效：解码乱码翻转显现（Text Scramble 经典模式） ============
+const TEXT='aaaaaaa.vip';
+const CHARS='!<>-_\\/[]{}—=+*^?#01';
+function Scramble(el){this.el=el;this.frame=0;this.queue=[];}
+Scramble.prototype.setText=function(newText){
+    const len=newText.length;
+    this.queue=[];
+    for(let i=0;i<len;i++){
+        const start=Math.floor(Math.random()*8);         // 第几帧开始变
+        const end=start+4+Math.floor(Math.random()*8);   // 第几帧定格
+        this.queue.push({to:newText[i],start,end,char:''});
+    }
+    cancelAnimationFrame(this.frameReq);
+    this.frame=0;
+    this.update();
+};
+Scramble.prototype.update=function(){
+    let out='',done=0;
+    for(const q of this.queue){
+        if(this.frame>=q.end){done++;out+='<span class="lit">'+q.to+'</span>';}
+        else if(this.frame>=q.start){
+            if(!q.char||Math.random()<.28)
+                q.char=CHARS[Math.floor(Math.random()*CHARS.length)];
+            out+='<span class="dim">'+q.char+'</span>';
+        }else out+='<span class="dim">&nbsp;</span>';
+    }
+    this.el.innerHTML=out;
+    if(done<this.queue.length){
+        this.frameReq=requestAnimationFrame(()=>this.update());
+        this.frame++;
+    }
+};
+
 // ============ 节奏编排（0ms 预热落地连接 + 400ms 起跳） ============
 // 关键提速：落地 kb.aaaaaaa.vip 的 DNS+TCP+TLS 冷启动实测 ~2s（大头），
 // 页面一打开就发 no-cors 预热请求把连接焐热，跳转时直接复用热连接，落地近乎秒开。
 var GO='https://kb.aaaaaaa.vip';
 try{fetch(GO+'/api/status',{mode:'no-cors',cache:'no-store'});}catch(e){}
-document.getElementById('addr').textContent='aaaaaaa.vip';
+var sc=new Scramble(document.getElementById('addr'));
+setTimeout(function(){sc.setText(TEXT);},60);
 setTimeout(function(){location.replace(GO);},400);
 document.addEventListener('touchstart',function(){location.replace(GO);},{passive:true});
 document.addEventListener('click',function(){location.replace(GO);});
