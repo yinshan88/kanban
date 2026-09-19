@@ -3,216 +3,201 @@
 <head>
     <meta charset="UTF-8">
     <title>正在进入看板…</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
     <link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
-    <!-- 动效核心取自 GitHub 开源项目 CLOUDWERX-DEV/Quantum-Particle-Animation (MIT License)
-         https://github.com/CLOUDWERX-DEV/Quantum-Particle-Animation
-         启用其 Vortex（漩涡）+ Trails（拖尾）+ Connections（粒子连线）效果，
-         配色改为黑白单色（原版为蓝紫彩色系），跳转定时 1.6s，点击立即跳。 -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <!-- 粒子凝字技术取自 GitHub 开源项目 develper21/sphere_particle (MIT License)
+         https://github.com/develper21/sphere_particle
+         核心 borrowed：THREE.Points + 球面分布 + 离屏 canvas 文字像素采样 + 补间变形。
+         本页用法：随机星尘 → 凝结成 aaaaaaa.vip 字样 → 停留 → 跳转看板。黑白配色。 -->
     <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #000;
-            font-family: -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
-        }
-        canvas {
-            display: block;
-            position: fixed;
-            top: 0;
-            left: 0;
-            z-index: 1;
-        }
-        #go {
-            position: fixed;
-            left: 0; right: 0; bottom: 9%;
-            text-align: center;
-            color: rgba(255,255,255,.55);
-            font-size: 13px;
-            letter-spacing: 4px;
-            z-index: 2;
-            pointer-events: none;
-            animation: p 1.6s ease-in-out infinite;
-        }
-        @keyframes p { 0%,100%{opacity:.35} 50%{opacity:.9} }
+        html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}
+        #container{width:100%;height:100%}
+        #go{position:fixed;left:0;right:0;bottom:8%;text-align:center;z-index:2;
+            color:rgba(255,255,255,.5);font:13px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+            letter-spacing:4px;pointer-events:none;animation:p 1.8s ease-in-out infinite}
+        @keyframes p{0%,100%{opacity:.3}50%{opacity:.85}}
     </style>
 </head>
 <body>
-    <canvas id="quantumCanvas"></canvas>
-    <div id="go">正在进入看板 · 点击立即跳转</div>
+<div id="container"></div>
+<div id="go">正在进入看板 · 点击立即跳转</div>
 
-    <script>
-    // ===== 以下核心逻辑改自 CLOUDWERX-DEV/Quantum-Particle-Animation (MIT) =====
-    // 保留其 QuantumParticle 类、Vortex 物理、Trails 拖尾、Connections 连线；
-    // 删去控制面板/FPS/其他特效；配色改黑白。
-    class QuantumParticle {
-        constructor(x, y, speed) {
-            this.x = x;
-            this.y = y;
-            this.baseRadius = Math.random() * 3 + 1;
-            this.radius = this.baseRadius;
-            this.dx = (Math.random() - 0.5) * 2 * speed;
-            this.dy = (Math.random() - 0.5) * 2 * speed;
-            this.originalSpeed = speed;
-            this.trail = [];
-        }
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// ===== 核心技术（球面粒子 + 文字像素采样变形）取自 develper21/sphere_particle (MIT) =====
+// 场景设定：星尘 → 凝结 aaaaaaa.vip → 保持约 1.5s → 跳转。原项目 GSAP 逐点补间
+// 在 12000 粒子下要建上万个 tween（且本页无 GSAP），改用统一的逐帧 lerp 逼近，
+// 效果相同（power2.inOut 用 easeInOutCubic 近似），性能更好。
+const TEXT = 'aaaaaaa.vip';
+const GO = 'https://kb.aaaaaaa.vip';
+const count = 9000;
 
-        update(width, height, delta = 16) {
-            const normalizedDelta = delta / 16;
-            this.x += this.dx * normalizedDelta;
-            this.y += this.dy * normalizedDelta;
-            if (this.x < 0 || this.x > width) {
-                this.dx *= -1;
-                this.x = Math.max(0, Math.min(width, this.x));
-            }
-            if (this.y < 0 || this.y > height) {
-                this.dy *= -1;
-                this.y = Math.max(0, Math.min(height, this.y));
-            }
-            const speed = Math.hypot(this.dx, this.dy);
-            if (speed > this.originalSpeed * 2) {
-                this.dx = (this.dx / speed) * this.originalSpeed * 2;
-                this.dy = (this.dy / speed) * this.originalSpeed * 2;
-            }
-        }
+let scene, camera, renderer, particles;
+let phase = 'gather';          // gather(星尘) → text(凝结) → hold(保持) → go
+let phaseStart = performance.now();
+const startPos = new Float32Array(count * 3);   // 凝结起点（随机星尘）
+const textPos = new Float32Array(count * 3);    // 文字目标点
 
-        draw(ctx, glowIntensity) {
-            ctx.beginPath();
-            ctx.fillStyle = this.color;
-            ctx.shadowBlur = glowIntensity;
-            ctx.shadowColor = this.color;
-            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-        }
+function init() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setClearColor(0x000000);
+    document.getElementById('container').appendChild(renderer.domElement);
+    camera.position.z = 25;
+    createParticles();
+    animate();
+}
+
+// 球面均匀分布（原项目 sphericalDistribution 原样保留）
+function sphericalDistribution(i) {
+    const phi = Math.acos(-1 + (2 * i) / count);
+    const theta = Math.sqrt(count * Math.PI) * phi;
+    return {
+        x: 8 * Math.cos(theta) * Math.sin(phi),
+        y: 8 * Math.sin(theta) * Math.sin(phi),
+        z: 8 * Math.cos(phi)
+    };
+}
+
+function createParticles() {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+
+    for (let i = 0; i < count; i++) {
+        // 初始 = 大范围随机星尘（比原项目的球壳更散，为"凝结"留出汇聚感）
+        const x = (Math.random() - 0.5) * 60;
+        const y = (Math.random() - 0.5) * 40;
+        const z = (Math.random() - 0.5) * 30;
+        positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+        startPos[i * 3] = x; startPos[i * 3 + 1] = y; startPos[i * 3 + 2] = z;
+
+        // 黑白灰阶（原项目为 HSL 青蓝色，此处改白）
+        const v = 0.55 + Math.random() * 0.45;
+        colors[i * 3] = v; colors[i * 3 + 1] = v; colors[i * 3 + 2] = v;
     }
 
-    class QuantumParticleAnimation {
-        constructor() {
-            this.canvas = document.getElementById('quantumCanvas');
-            this.ctx = this.canvas.getContext('2d');
-            this.particles = [];
-            this.connectionRadius = 150;
-            this.particleCount = 150;
-            this.particleSpeed = 1;
-            this.glowIntensity = 20;
-            this.vortexActive = true;     // ← 漩涡：开场即启用（原版为开关按钮）
-            this.trailsActive = true;     // ← 拖尾：开场即启用
-            this.mousePos = { x: 0, y: 0 };
-            this.lastTime = performance.now();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-            this.resize();
-            this.initParticles();
-            this.setupEventListeners();
-            this.animate();
-        }
-
-        setupEventListeners() {
-            window.addEventListener('resize', () => this.resize());
-            this.canvas.addEventListener('mousemove', (e) => {
-                this.mousePos.x = e.clientX;
-                this.mousePos.y = e.clientY;
-            });
-        }
-
-        resize() {
-            this.canvas.width = window.innerWidth;
-            this.canvas.height = window.innerHeight;
-            this.width = this.canvas.width;
-            this.height = this.canvas.height;
-        }
-
-        initParticles() {
-            this.particles = [];
-            for (let i = 0; i < this.particleCount; i++) {
-                this.particles.push(new QuantumParticle(
-                    Math.random() * this.width,
-                    Math.random() * this.height,
-                    this.particleSpeed
-                ));
-            }
-        }
-
-        drawConnections() {
-            this.ctx.beginPath();
-            for (let i = 0; i < this.particles.length; i++) {
-                for (let j = i + 1; j < this.particles.length; j++) {
-                    const p1 = this.particles[i];
-                    const p2 = this.particles[j];
-                    const distance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-                    if (distance < this.connectionRadius) {
-                        const opacity = 1 - (distance / this.connectionRadius);
-                        // 原版 rgba(100,200,255,...) 蓝色连线 → 改为白色
-                        this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.3})`;
-                        this.ctx.moveTo(p1.x, p1.y);
-                        this.ctx.lineTo(p2.x, p2.y);
-                    }
-                }
-            }
-            this.ctx.stroke();
-        }
-
-        animate() {
-            const delta = performance.now() - this.lastTime;
-            this.lastTime = performance.now();
-
-            // 原版拖尾画法：半透明黑覆盖制造残影
-            this.ctx.fillStyle = this.trailsActive ? 'rgba(0, 0, 0, 0.1)' : 'rgba(0, 0, 0, 0.2)';
-            this.ctx.fillRect(0, 0, this.width, this.height);
-
-            this.drawConnections();
-
-            const centerX = this.width / 2;
-            const centerY = this.height / 2;
-
-            for (let particle of this.particles) {
-                // 拖尾（原版逻辑）
-                if (this.trailsActive) {
-                    this.ctx.beginPath();
-                    this.ctx.strokeStyle = particle.color.replace('0.8', '0.2');
-                    this.ctx.lineWidth = particle.radius * 0.5;
-                    if (!particle.trail) particle.trail = [];
-                    particle.trail.push({ x: particle.x, y: particle.y });
-                    if (particle.trail.length > 10) particle.trail.shift();
-                    if (particle.trail.length > 1) {
-                        this.ctx.moveTo(particle.trail[0].x, particle.trail[0].y);
-                        for (let i = 1; i < particle.trail.length; i++) {
-                            this.ctx.lineTo(particle.trail[i].x, particle.trail[i].y);
-                        }
-                        this.ctx.stroke();
-                    }
-                }
-
-                // 漩涡物理（原版 Vortex Effect 公式，逐字保留）
-                if (this.vortexActive) {
-                    const dx = particle.x - centerX;
-                    const dy = particle.y - centerY;
-                    const angle = Math.atan2(dy, dx);
-                    const vortexForce = 0.1;
-                    particle.dx += -Math.sin(angle) * vortexForce;
-                    particle.dy += Math.cos(angle) * vortexForce;
-                }
-
-                particle.update(this.width, this.height, delta);
-                particle.draw(this.ctx, this.glowIntensity);
-            }
-
-            requestAnimationFrame(() => this.animate());
-        }
-    }
-
-    // 初始化：黑白配色（原版 default 色板是随机彩色，这里固定白色）
-    window.addEventListener('load', () => {
-        window.animation = new QuantumParticleAnimation();
-        for (let p of window.animation.particles) {
-            p.color = 'rgba(255, 255, 255, 0.8)';
-        }
-        setTimeout(function(){ location.replace('https://kb.aaaaaaa.vip'); }, 1600);
-        document.addEventListener('click', function(){ location.replace('https://kb.aaaaaaa.vip'); });
+    const material = new THREE.PointsMaterial({
+        size: 0.08,
+        vertexColors: true,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        opacity: 0.8,
+        sizeAttenuation: true
     });
-    </script>
-    <noscript><meta http-equiv="refresh" content="0;url=https://kb.aaaaaaa.vip"></noscript>
+
+    particles = new THREE.Points(geometry, material);
+    scene.add(particles);
+}
+
+// 文字像素采样（原项目 createTextPoints 保留核心，采样率 0.3→按需调）
+function createTextPoints(text) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontSize = 100;
+    const padding = 20;
+
+    ctx.font = `bold ${fontSize}px Arial`;
+    const textWidth = ctx.measureText(text).width;
+    const textHeight = fontSize;
+
+    canvas.width = textWidth + padding * 2;
+    canvas.height = textHeight + padding * 2;
+
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${fontSize}px Arial`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    const points = [];
+    const threshold = 128;
+
+    for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] > threshold) {
+            const x = (i / 4) % canvas.width;
+            const y = Math.floor((i / 4) / canvas.width);
+            if (Math.random() < 0.3) {
+                points.push({
+                    x: (x - canvas.width / 2) / (fontSize / 10),
+                    y: -(y - canvas.height / 2) / (fontSize / 10)
+                });
+            }
+        }
+    }
+    return points;
+}
+
+// 计算文字目标点阵：前 N 个粒子贴文字，其余散到外围星尘（原项目 morphToText 的分配策略）
+function buildTextTargets() {
+    const textPoints = createTextPoints(TEXT);
+    for (let i = 0; i < count; i++) {
+        if (i < textPoints.length) {
+            textPos[i * 3] = textPoints[i].x;
+            textPos[i * 3 + 1] = textPoints[i].y;
+            textPos[i * 3 + 2] = 0;
+        } else {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * 20 + 10;
+            textPos[i * 3] = Math.cos(angle) * radius;
+            textPos[i * 3 + 1] = Math.sin(angle) * radius;
+            textPos[i * 3 + 2] = (Math.random() - 0.5) * 10;
+        }
+    }
+}
+
+function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const elapsed = now - phaseStart;
+
+    const positions = particles.geometry.attributes.position.array;
+
+    if (phase === 'gather') {
+        // 前 0.4s 星尘轻微漂浮，随后进入凝结
+        if (elapsed > 400) { phase = 'text'; phaseStart = now; buildTextTargets(); }
+    } else if (phase === 'text') {
+        // 1.4s 凝结成字（easeInOutCubic ≈ 原项目 power2.inOut 手感）
+        const t = Math.min(elapsed / 1400, 1);
+        const k = easeInOutCubic(t);
+        for (let i = 0; i < positions.length; i++) {
+            positions[i] = startPos[i] + (textPos[i] - startPos[i]) * k;
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+        if (t >= 1) { phase = 'hold'; phaseStart = now; }
+    } else if (phase === 'hold') {
+        // 字保持 + 缓慢自转（原项目 sphere 态 rotation.y 的用法）
+        particles.rotation.y = ((elapsed - 600) / 1000) * 0.0006 * (elapsed - 600 > 600 ? 1 : 0);
+        if (elapsed > 1500) { phase = 'go'; phaseStart = now; location.replace(GO); }
+    }
+
+    renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+});
+
+// 点击立即跳
+document.addEventListener('click', function(){ location.replace(GO); });
+
+init();
+</script>
+<noscript><meta http-equiv="refresh" content="0;url=https://kb.aaaaaaa.vip"></noscript>
 </body>
 </html>
