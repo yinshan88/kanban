@@ -11,6 +11,8 @@
          https://github.com/develper21/sphere_particle
          核心 borrowed：THREE.Points + 球面分布 + 离屏 canvas 文字像素采样 + 补间变形。
          本页用法：随机星尘 → 凝结成 aaaaaaa.vip 字样 → 停留 → 跳转看板。黑白配色。
+         手机端适配：粒子数减半(4500)、DPR 封顶 2、相机拉远、单行字按屏宽整体缩放、
+         hold 期禁止旋转（长字一转就像被裁）、touchstart 秒跳。
          2026-09-19 手机端优化：
            ① 粒子数按屏幕自适应（手机 4500 / 桌面 9000），devicePixelRatio 封顶 2 防高分屏过载
            ② 关 antialias（手机 GPU 省一截，粒子本来就圆看不出锯齿）
@@ -150,24 +152,26 @@ function createTextPoints(text) {
 }
 
 // 目标点阵：前 N 个粒子贴文字，其余散外围（原项目 morphToText 分配策略）
-// 字宽超出可视范围时整体缩放——手机竖屏 narrow，保证 aaaaaaa.vip 完整可见
+// 【网址永远单行】手机端靠「整体缩放」保证 11 字符完整可见：字宽超出可视范围时
+// 等比缩小撑满屏宽 88%；桌面端同样逻辑（桌面屏宽够时 scale=1 不缩）。
+// ⚠️ hold 期绝不能自转——长条字绕 Y 轴一转，后面的字母转到侧面，看起来就像被裁。
 function buildTextTargets() {
-    const textPoints = createTextPoints(TEXT);
-    // 文字总宽（世界坐标）：fontSize=100px 采样后 x 范围 ≈ ±(textWidth/2)/(fontSize/10)
-    // 相机 z=34(手机)/25(桌面)，fov 75° → 可视半宽 = z * tan(37.5°) * aspect
     const halfW = camera.position.z * Math.tan(THREE.MathUtils.degToRad(37.5)) * camera.aspect;
-    const textHalfW = textPoints.length ? Math.max(...textPoints.map(p => Math.abs(p.x))) : 10;
-    const scale = Math.min(1, (halfW * 0.85) / textHalfW);
+    const textPoints = createTextPoints(TEXT);
+    if (!textPoints.length) return;
+
+    const textHalfW = Math.max(...textPoints.map(function(p){ return Math.abs(p.x); }));
+    const scale = Math.min(1, (halfW * 0.88) / textHalfW);   // 单行整体缩放，字永远完整
 
     for (let i = 0; i < count; i++) {
         if (i < textPoints.length) {
-            textPos[i * 3] = textPoints[i].x * scale;
+            textPos[i * 3]     = textPoints[i].x * scale;
             textPos[i * 3 + 1] = textPoints[i].y * scale;
             textPos[i * 3 + 2] = 0;
         } else {
             const angle = Math.random() * Math.PI * 2;
             const radius = Math.random() * 20 + 10;
-            textPos[i * 3] = Math.cos(angle) * radius;
+            textPos[i * 3]     = Math.cos(angle) * radius;
             textPos[i * 3 + 1] = Math.sin(angle) * radius;
             textPos[i * 3 + 2] = (Math.random() - 0.5) * 10;
         }
@@ -226,11 +230,11 @@ function animate() {
         particles.geometry.attributes.position.needsUpdate = true;
         if (elapsed >= DUR) { phase = 'hold'; phaseStart = now; }
     } else if (phase === 'hold') {
-        // 字保持：只转 rotation（零 CPU 逐帧开销），轻微呼吸缩放
+        // 字保持：不旋转（旋转会把字转出屏外，手机上像被裁），改呼吸缩放 + 辉光脉动
         const e = elapsed;
-        particles.rotation.y = Math.min(e, 800) * 0.00012;
-        const breath = 1 + Math.sin(e * 0.004) * 0.015;
+        const breath = 1 + Math.sin(e * 0.004) * 0.02;
         particles.scale.set(breath, breath, breath);
+        particles.material.opacity = 0.75 + Math.sin(e * 0.005) * 0.15;
         if (elapsed > 1500) { phase = 'go'; location.replace(GO); }
     }
 
