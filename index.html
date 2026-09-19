@@ -12,8 +12,9 @@
          2026-09-19 23:27 修「文字没动效」真因：setTimeout 按墙上时钟计，慢设备上第一帧
          未渲染就被 400ms 跳走 → 看到静态文字。改为帧驱动（第一个 rAF 开动画，画满 20 帧跳）
          + 2.5s 兜底计时。任何设备都保证先看到动画再跳。
-         2026-09-19 23:35 再提速：动画帧收紧（start 0~4/end+2~7）+ 20帧→13帧跳（≈0.22s），
-         兜底 2.5s→2s。动画约 1/3 处就跳，看得见动效但不拖沓。 -->
+         2026-09-19 23:38 用户拍板「一进专跳页就要加载专跳」：进页立即 location.replace，
+         预热先行，解码动画并行跑当视觉过渡（跳转通常在动画中途完成）。
+         兜底 1.2s（仅当跳转被网络卡住时可见完整动画）。 -->
     <style>
         html,body{margin:0;padding:0;height:100%;overflow:hidden;
             -webkit-tap-highlight-color:transparent;
@@ -125,29 +126,20 @@ Scramble.prototype.update=function(){
     }
 };
 
-// ============ 节奏编排（帧驱动起跳：保证动画先渲染、再跳转） ============
-// 修 bug：原 400ms setTimeout 按"墙上时钟"计，慢设备/慢网络上第一帧还没画出来
-// 就跳走了 → 用户看到的是静态文字。改为从第一个 rAF（=第一帧已画）才启动动画，
-// 画满 JUMP_FRAME 帧才跳，另加兜底计时器防极端情况。
+// ============ 节奏编排（极简直跳：进页即跳，动画只当过渡） ============
+// 2026-09-19 23:38 用户拍板「一进专跳页就要加载专跳」：不再等帧数，进页立即跳转。
+// 连接预热 0ms 已发，跳转与动画并行，动画作为跳转等待期的视觉过渡。
 var GO='https://kb.aaaaaaa.vip';
 try{fetch(GO+'/api/status',{mode:'no-cors',cache:'no-store'});}catch(e){}
-var JUMP_FRAME=13;        // 画满 13 帧（≈0.22s 动画）后跳，乱码翻滚可见又不拖沓
 var jumped=false;
 function jump(){
     if(jumped)return;jumped=true;
     location.replace(GO);
 }
 var sc=new Scramble(document.getElementById('addr'));
-// 第一个 rAF 才开始解码：确保动画从用户真正看到的画面起步
-requestAnimationFrame(function(){
-    sc.setText(TEXT);
-    (function tick(){
-        if(jumped)return;
-        if(sc.frame>=JUMP_FRAME){jump();return;}
-        requestAnimationFrame(tick);
-    })();
-});
-setTimeout(jump,2000);    // 兜底：rAF 万一被省电模式掐死，2s 强制跳
+sc.setText(TEXT);          // 立即开解码（不等首帧，反正马上就跳）
+jump();                    // 进页即跳
+setTimeout(jump,1200);     // 兜底
 document.addEventListener('touchstart',jump,{passive:true});
 document.addEventListener('click',jump);
 </script>
