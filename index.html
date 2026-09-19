@@ -6,14 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
     <link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
-    <!-- 展示形式：白色背景 + 黑色文字 + 背景粒子扩散动效（开屏瞬间粒子从中心炸开漂浮，
-         类似最初粒子版的开屏观感，黑白反色配色）。
+    <!-- 展示形式：浅色渐变背景（米白→淡灰蓝）+ 深灰文字 + 双色粒子炸开动效。
          文字 DOM 渲染 + vw 自适应字号，任何屏幕完整可见。零依赖纯 Canvas 2D。
-         2026-09-19 23:15 用户拍板：白底黑字，背景粒子恢复最初开屏炸开效果。
+         2026-09-19 23:17 用户拍板：浅色背景，粒子不限黑白。
          节奏：0ms 预热落地连接 → 400ms 起跳，点击立即跳。 -->
     <style>
-        html,body{margin:0;padding:0;height:100%;background:#fff;overflow:hidden;
-            -webkit-tap-highlight-color:transparent}
+        html,body{margin:0;padding:0;height:100%;overflow:hidden;
+            -webkit-tap-highlight-color:transparent;
+            background:linear-gradient(135deg,#fafbfc 0%,#eef1f6 55%,#e3e9f2 100%)}
         #stars{position:fixed;inset:0;z-index:1}
         #wrap{position:fixed;inset:0;z-index:2;display:flex;flex-direction:column;
             align-items:center;justify-content:center;pointer-events:none}
@@ -21,12 +21,12 @@
             font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;
             font-weight:900;
             font-size:min(8.5vw,72px);
-            color:#111;
+            color:#1f2937;
             letter-spacing:.04em;
             white-space:nowrap;
         }
         #go{position:fixed;left:0;right:0;bottom:calc(8% + env(safe-area-inset-bottom));
-            text-align:center;z-index:3;color:rgba(0,0,0,.4);
+            text-align:center;z-index:3;color:rgba(31,41,55,.45);
             font:13px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
             letter-spacing:4px;pointer-events:none;animation:p 1.8s ease-in-out infinite}
         @keyframes p{0%,100%{opacity:.3}50%{opacity:.85}}
@@ -40,11 +40,12 @@
 <div id="go">正在进入看板 · 点击立即跳转</div>
 
 <script>
-// ============ 粒子背景：开屏从中心炸开 → 漂浮（纯 Canvas 2D，无库，黑白反色） ============
+// ============ 粒子背景：开屏从中心炸开 → 漂浮（纯 Canvas 2D，无库，浅色系双色粒子） ============
 (function(){
     var cv=document.getElementById('stars'),ctx=cv.getContext('2d');
     var DPR=Math.min(devicePixelRatio||1,2);
     var W,H,dots=[];
+    var COLORS=['94,114,235','52,168,255','255,158,88','94,190,170'];   // 靛蓝/天蓝/暖橙/青绿
     function size(){
         W=cv.width=innerWidth*DPR;H=cv.height=innerHeight*DPR;
         cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';
@@ -59,9 +60,9 @@
                 x:cx+(Math.random()-.5)*40*DPR,
                 y:cy+(Math.random()-.5)*40*DPR,
                 vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
-                r:(Math.random()*1.6+.5)*DPR,
+                r:(Math.random()*1.8+.6)*DPR,
                 tw:Math.random()*Math.PI*2,
-                born:performance.now()
+                c:COLORS[Math.floor(Math.random()*COLORS.length)]
             });
         }
     }
@@ -71,16 +72,16 @@
         ctx.clearRect(0,0,W,H);
         for(var i=0;i<dots.length;i++){
             var d=dots[i];
-            // 炸开后速度指数衰减 → 缓慢漂浮（衰减到 0.012 倍后保持微微漂移）
+            // 炸开后速度指数衰减 → 缓慢漂浮
             d.vx*=.965;d.vy*=.965;
             d.vx+=Math.sin(t*.0006+d.tw)*.006*DPR;
             d.vy+=Math.cos(t*.0007+d.tw)*.006*DPR;
             d.x+=d.vx;d.y+=d.vy;
             if(d.x<0)d.x=W;if(d.x>W)d.x=0;
             if(d.y<0)d.y=H;if(d.y>H)d.y=0;
-            var a=.35+.4*Math.abs(Math.sin(t*.001+d.tw));   // 闪烁
+            var a=.45+.35*Math.abs(Math.sin(t*.001+d.tw));   // 闪烁
             ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,7);
-            ctx.fillStyle='rgba(0,0,0,'+a+')';ctx.fill();   // 白底 → 黑粒子
+            ctx.fillStyle='rgba('+d.c+','+a+')';ctx.fill();
         }
     })(0);
 })();
