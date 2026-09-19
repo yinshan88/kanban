@@ -3,18 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <title>正在进入看板…</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link rel="preconnect" href="https://kb.aaaaaaa.vip" crossorigin>
     <link rel="dns-prefetch" href="https://kb.aaaaaaa.vip">
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <!-- 粒子凝字技术取自 GitHub 开源项目 develper21/sphere_particle (MIT License)
          https://github.com/develper21/sphere_particle
          核心 borrowed：THREE.Points + 球面分布 + 离屏 canvas 文字像素采样 + 补间变形。
-         本页用法：随机星尘 → 凝结成 aaaaaaa.vip 字样 → 停留 → 跳转看板。黑白配色。 -->
+         本页用法：随机星尘 → 凝结成 aaaaaaa.vip 字样 → 停留 → 跳转看板。黑白配色。
+         2026-09-19 手机端优化：
+           ① 粒子数按屏幕自适应（手机 4500 / 桌面 9000），devicePixelRatio 封顶 2 防高分屏过载
+           ② 关 antialias（手机 GPU 省一截，粒子本来就圆看不出锯齿）
+           ③ 手机相机拉远（z=34）适配竖屏，横竖屏切换（resize/orientationchange）都重算目标
+           ④ 效果曲线重做：凝结改为「先缓后快再缓」的 backOut 轻微过冲（粒子有冲进去的
+              劲头，不再是匀速滑入）；每粒子错峰 0~25% 延迟，先后来齐，凝结有层次
+           ⑤ 漂浮相位加入微视差漂移（gather 期粒子缓慢流动，不是死版freeze）
+           ⑥ 9000 粒子全帧 lerp 在低端机掉帧 → 凝结期每帧只更新一次、用局部变量缓存数组，
+              且 hold 期停止逐帧写 position（自转靠 rotation，零 CPU 开销） -->
     <style>
-        html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}
-        #container{width:100%;height:100%}
-        #go{position:fixed;left:0;right:0;bottom:8%;text-align:center;z-index:2;
+        html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;
+            -webkit-tap-highlight-color:transparent}
+        #container{width:100%;height:100%;position:fixed;inset:0}
+        #go{position:fixed;left:0;right:0;bottom:calc(8% + env(safe-area-inset-bottom));text-align:center;z-index:2;
             color:rgba(255,255,255,.5);font:13px/1.6 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
             letter-spacing:4px;pointer-events:none;animation:p 1.8s ease-in-out infinite}
         @keyframes p{0%,100%{opacity:.3}50%{opacity:.85}}
@@ -27,27 +37,31 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script>
 // ===== 核心技术（球面粒子 + 文字像素采样变形）取自 develper21/sphere_particle (MIT) =====
-// 场景设定：星尘 → 凝结 aaaaaaa.vip → 保持约 1.5s → 跳转。原项目 GSAP 逐点补间
-// 在 12000 粒子下要建上万个 tween（且本页无 GSAP），改用统一的逐帧 lerp 逼近，
-// 效果相同（power2.inOut 用 easeInOutCubic 近似），性能更好。
 const TEXT = 'aaaaaaa.vip';
 const GO = 'https://kb.aaaaaaa.vip';
-const count = 9000;
+
+// 手机端自适应粒子数：按屏幕面积估算，手机≈4500、桌面≈9000（原项目固定 12000）
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+                  || Math.min(innerWidth, innerHeight) < 600;
+const count = IS_MOBILE ? 4500 : 9000;
 
 let scene, camera, renderer, particles;
 let phase = 'gather';          // gather(星尘) → text(凝结) → hold(保持) → go
 let phaseStart = performance.now();
-const startPos = new Float32Array(count * 3);   // 凝结起点（随机星尘）
-const textPos = new Float32Array(count * 3);    // 文字目标点
+const startPos = new Float32Array(count * 3);
+const textPos = new Float32Array(count * 3);
+const delays = new Float32Array(count);   // 每粒子错峰延迟 0~0.25（曲线分层用）
+const DPR = Math.min(devicePixelRatio || 1, 2);
 
 function init() {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(DPR);
     renderer.setSize(innerWidth, innerHeight);
     renderer.setClearColor(0x000000);
     document.getElementById('container').appendChild(renderer.domElement);
-    camera.position.z = 25;
+    camera.position.z = IS_MOBILE ? 34 : 25;   // 手机竖屏拉远，字才放得下
     createParticles();
     animate();
 }
@@ -69,14 +83,13 @@ function createParticles() {
     const colors = new Float32Array(count * 3);
 
     for (let i = 0; i < count; i++) {
-        // 初始 = 大范围随机星尘（比原项目的球壳更散，为"凝结"留出汇聚感）
         const x = (Math.random() - 0.5) * 60;
         const y = (Math.random() - 0.5) * 40;
         const z = (Math.random() - 0.5) * 30;
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
         startPos[i * 3] = x; startPos[i * 3 + 1] = y; startPos[i * 3 + 2] = z;
+        delays[i] = Math.random() * 0.25;        // 错峰：每粒子晚 0~25% 才动身
 
-        // 黑白灰阶（原项目为 HSL 青蓝色，此处改白）
         const v = 0.55 + Math.random() * 0.45;
         colors[i * 3] = v; colors[i * 3 + 1] = v; colors[i * 3 + 2] = v;
     }
@@ -97,7 +110,7 @@ function createParticles() {
     scene.add(particles);
 }
 
-// 文字像素采样（原项目 createTextPoints 保留核心，采样率 0.3→按需调）
+// 文字像素采样（原项目 createTextPoints 核心）
 function createTextPoints(text) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -106,10 +119,9 @@ function createTextPoints(text) {
 
     ctx.font = `bold ${fontSize}px Arial`;
     const textWidth = ctx.measureText(text).width;
-    const textHeight = fontSize;
 
     canvas.width = textWidth + padding * 2;
-    canvas.height = textHeight + padding * 2;
+    canvas.height = fontSize + padding * 2;
 
     ctx.fillStyle = 'white';
     ctx.font = `bold ${fontSize}px Arial`;
@@ -137,13 +149,20 @@ function createTextPoints(text) {
     return points;
 }
 
-// 计算文字目标点阵：前 N 个粒子贴文字，其余散到外围星尘（原项目 morphToText 的分配策略）
+// 目标点阵：前 N 个粒子贴文字，其余散外围（原项目 morphToText 分配策略）
+// 字宽超出可视范围时整体缩放——手机竖屏 narrow，保证 aaaaaaa.vip 完整可见
 function buildTextTargets() {
     const textPoints = createTextPoints(TEXT);
+    // 文字总宽（世界坐标）：fontSize=100px 采样后 x 范围 ≈ ±(textWidth/2)/(fontSize/10)
+    // 相机 z=34(手机)/25(桌面)，fov 75° → 可视半宽 = z * tan(37.5°) * aspect
+    const halfW = camera.position.z * Math.tan(THREE.MathUtils.degToRad(37.5)) * camera.aspect;
+    const textHalfW = textPoints.length ? Math.max(...textPoints.map(p => Math.abs(p.x))) : 10;
+    const scale = Math.min(1, (halfW * 0.85) / textHalfW);
+
     for (let i = 0; i < count; i++) {
         if (i < textPoints.length) {
-            textPos[i * 3] = textPoints[i].x;
-            textPos[i * 3 + 1] = textPoints[i].y;
+            textPos[i * 3] = textPoints[i].x * scale;
+            textPos[i * 3 + 1] = textPoints[i].y * scale;
             textPos[i * 3 + 2] = 0;
         } else {
             const angle = Math.random() * Math.PI * 2;
@@ -155,45 +174,81 @@ function buildTextTargets() {
     }
 }
 
-function easeInOutCubic(t) {
-    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+// ===== 效果曲线（重做）=====
+// ① 主缓动：easeOutBack —— 先快后慢、终点轻微过冲再回弹，粒子"冲进"字里
+function easeOutBack(t) {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }
+// ② 前段加速铺垫：easeInQuad，让起步有蓄力感
+function easeInQuad(t) { return t * t; }
+// ③ 每粒子合成曲线：铺垫(quad) + 主段(back 过冲)，按各自 delay 错峰
+function particleK(elapsed, dur, delay) {
+    const t = (elapsed / dur - delay) / (1 - delay);   // 扣除错峰后自己的进度
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    if (t < 0.35) return easeInQuad(t / 0.35) * 0.18;              // 前 35% 时间只走 18% 路程（蓄力）
+    const t2 = (t - 0.35) / 0.65;
+    return 0.18 + easeOutBack(t2) * 0.82;                          // 后 65% 冲刺 + 过冲回弹
+}
+
+let driftSeed = new Float32Array(count);   // gather 期微视差漂移的随机相位
+for (let i = 0; i < count; i++) driftSeed[i] = Math.random() * Math.PI * 2;
 
 function animate() {
     requestAnimationFrame(animate);
     const now = performance.now();
     const elapsed = now - phaseStart;
 
-    const positions = particles.geometry.attributes.position.array;
+    const pos = particles.geometry.attributes.position.array;
 
     if (phase === 'gather') {
-        // 前 0.4s 星尘轻微漂浮，随后进入凝结
-        if (elapsed > 400) { phase = 'text'; phaseStart = now; buildTextTargets(); }
-    } else if (phase === 'text') {
-        // 1.4s 凝结成字（easeInOutCubic ≈ 原项目 power2.inOut 手感）
-        const t = Math.min(elapsed / 1400, 1);
-        const k = easeInOutCubic(t);
-        for (let i = 0; i < positions.length; i++) {
-            positions[i] = startPos[i] + (textPos[i] - startPos[i]) * k;
+        // 0.4s 星尘微视差漂移（每粒子按相位轻微绕动，不是死版freeze）
+        const t = now * 0.001;
+        for (let i = 0; i < count; i++) {
+            const s = driftSeed[i];
+            pos[i * 3]     = startPos[i * 3]     + Math.sin(t * 0.8 + s) * 0.6;
+            pos[i * 3 + 1] = startPos[i * 3 + 1] + Math.cos(t * 0.6 + s) * 0.6;
         }
         particles.geometry.attributes.position.needsUpdate = true;
-        if (t >= 1) { phase = 'hold'; phaseStart = now; }
+        if (elapsed > 400) { phase = 'text'; phaseStart = now; buildTextTargets(); }
+    } else if (phase === 'text') {
+        // 1.5s 凝结：错峰 + 蓄力冲刺 + 过冲回弹
+        const DUR = 1500;
+        let maxK = 0;
+        for (let i = 0; i < count; i++) {
+            const k = particleK(elapsed, DUR, delays[i]);
+            if (k > maxK) maxK = k;
+            pos[i * 3]     = startPos[i * 3]     + (textPos[i * 3]     - startPos[i * 3])     * k;
+            pos[i * 3 + 1] = startPos[i * 3 + 1] + (textPos[i * 3 + 1] - startPos[i * 3 + 1]) * k;
+            pos[i * 3 + 2] = startPos[i * 3 + 2] + (textPos[i * 3 + 2] - startPos[i * 3 + 2]) * k;
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+        if (elapsed >= DUR) { phase = 'hold'; phaseStart = now; }
     } else if (phase === 'hold') {
-        // 字保持 + 缓慢自转（原项目 sphere 态 rotation.y 的用法）
-        particles.rotation.y = ((elapsed - 600) / 1000) * 0.0006 * (elapsed - 600 > 600 ? 1 : 0);
-        if (elapsed > 1500) { phase = 'go'; phaseStart = now; location.replace(GO); }
+        // 字保持：只转 rotation（零 CPU 逐帧开销），轻微呼吸缩放
+        const e = elapsed;
+        particles.rotation.y = Math.min(e, 800) * 0.00012;
+        const breath = 1 + Math.sin(e * 0.004) * 0.015;
+        particles.scale.set(breath, breath, breath);
+        if (elapsed > 1500) { phase = 'go'; location.replace(GO); }
     }
 
     renderer.render(scene, camera);
 }
 
-addEventListener('resize', () => {
+function onResize() {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
-});
+    // 横竖屏切换后重算文字缩放，字始终完整可见
+    if (phase === 'text' || phase === 'hold') buildTextTargets();
+}
+addEventListener('resize', onResize);
+addEventListener('orientationchange', () => setTimeout(onResize, 200));
 
-// 点击立即跳
+// 触屏立即跳（touchstart 比 click 快 300ms 无延迟）
+document.addEventListener('touchstart', function(){ location.replace(GO); }, { passive: true });
 document.addEventListener('click', function(){ location.replace(GO); });
 
 init();
