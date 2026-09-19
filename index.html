@@ -9,7 +9,9 @@
     <!-- 展示形式：浅色渐变背景 + 双色粒子炸开动效 + 文字解码乱码翻转显现（Text Scramble）。
          文字 DOM 渲染 + vw 自适应字号，任何屏幕完整可见。零依赖纯 Canvas 2D。
          2026-09-19 23:20 用户拍板：文字要有动效 → 恢复解码乱码翻转（浅灰乱码→深灰定格）。
-         节奏：0ms 预热落地连接 → 0.06s 开解码 → 400ms 起跳，点击立即跳。 -->
+         2026-09-19 23:27 修「文字没动效」真因：setTimeout 按墙上时钟计，慢设备上第一帧
+         未渲染就被 400ms 跳走 → 看到静态文字。改为帧驱动（第一个 rAF 开动画，画满 20 帧跳）
+         + 2.5s 兜底计时。任何设备都保证先看到动画再跳。 -->
     <style>
         html,body{margin:0;padding:0;height:100%;overflow:hidden;
             -webkit-tap-highlight-color:transparent;
@@ -121,16 +123,31 @@ Scramble.prototype.update=function(){
     }
 };
 
-// ============ 节奏编排（0ms 预热落地连接 + 400ms 起跳） ============
-// 关键提速：落地 kb.aaaaaaa.vip 的 DNS+TCP+TLS 冷启动实测 ~2s（大头），
-// 页面一打开就发 no-cors 预热请求把连接焐热，跳转时直接复用热连接，落地近乎秒开。
+// ============ 节奏编排（帧驱动起跳：保证动画先渲染、再跳转） ============
+// 修 bug：原 400ms setTimeout 按"墙上时钟"计，慢设备/慢网络上第一帧还没画出来
+// 就跳走了 → 用户看到的是静态文字。改为从第一个 rAF（=第一帧已画）才启动动画，
+// 画满 JUMP_FRAME 帧才跳，另加兜底计时器防极端情况。
 var GO='https://kb.aaaaaaa.vip';
 try{fetch(GO+'/api/status',{mode:'no-cors',cache:'no-store'});}catch(e){}
+var JUMP_FRAME=20;        // 画满 20 帧（≈330ms 动画）后跳
+var jumped=false;
+function jump(){
+    if(jumped)return;jumped=true;
+    location.replace(GO);
+}
 var sc=new Scramble(document.getElementById('addr'));
-setTimeout(function(){sc.setText(TEXT);},60);
-setTimeout(function(){location.replace(GO);},400);
-document.addEventListener('touchstart',function(){location.replace(GO);},{passive:true});
-document.addEventListener('click',function(){location.replace(GO);});
+// 第一个 rAF 才开始解码：确保动画从用户真正看到的画面起步
+requestAnimationFrame(function(){
+    sc.setText(TEXT);
+    (function tick(){
+        if(jumped)return;
+        if(sc.frame>=JUMP_FRAME){jump();return;}
+        requestAnimationFrame(tick);
+    })();
+});
+setTimeout(jump,2500);    // 兜底：rAF 万一被省电模式掐死，2.5s 强制跳
+document.addEventListener('touchstart',jump,{passive:true});
+document.addEventListener('click',jump);
 </script>
 <noscript><meta http-equiv="refresh" content="0;url=https://kb.aaaaaaa.vip"></noscript>
 </body>
