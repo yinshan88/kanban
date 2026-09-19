@@ -11,7 +11,8 @@
          配合纯 canvas 星尘漂浮背景。文字 DOM 渲染 + vw 自适应字号，任何屏幕完整可见。
          字体：黑体系（PingFang SC / 微软雅黑 Bold，粗黑体观感）。
          2026-09-19 22:52 用户拍板：去掉进度条（拖速度），整体节奏收紧到 1.6s。
-         节奏：乱码翻滚解码中（约一半）即起跳，总停留 ~0.65s，点击立即跳。 -->
+         2026-09-19 23:05 实测瓶颈在落地 TLS 冷启动 ~2s → 加 0ms no-cors 预热 + 起跳提前到 400ms。
+         节奏：0ms 预热连接 → 乱码解码约 1/3 即起跳，总停留 ~0.4s，点击立即跳。 -->
     <style>
         html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;
             -webkit-tap-highlight-color:transparent}
@@ -120,13 +121,15 @@ Scramble.prototype.update=function(){
     }
 };
 
-// ============ 节奏编排（无进度条，动画一半就跳） ============
+// ============ 节奏编排（0ms 预热落地连接 + 400ms 起跳） ============
+// 关键提速：落地 kb.aaaaaaa.vip 的 DNS+TCP+TLS 冷启动实测 ~2s（大头），
+// 页面一打开就发 no-cors 预热请求把连接焐热，跳转时直接复用热连接，落地近乎秒开。
+try{fetch(GO+'/api/status',{mode:'no-cors',cache:'no-store'});}catch(e){}
 const addr=document.getElementById('addr');
 const sc=new Scramble(addr);
-setTimeout(()=>sc.setText(TEXT),100);                    // 0.1s 即开始解码
-// 解码全程 ~1.1s（22帧队列×60fps），一半 ≈ 0.55s → 0.1+0.55 = 0.65s 时起跳
-// location.replace 后旧页照常渲染到跳转完成，动画后半段自然成为过渡
-setTimeout(()=>location.replace(GO),650);
+setTimeout(()=>sc.setText(TEXT),60);                     // 0.06s 即开始解码
+// 解码全程 ~1.1s，约 1/3 处起跳；预热请求已并行跑 ~0.4s，落地 handshake 基本完成
+setTimeout(()=>location.replace(GO),400);
 document.addEventListener('touchstart',()=>location.replace(GO),{passive:true});
 document.addEventListener('click',()=>location.replace(GO));
 </script>
